@@ -97,7 +97,7 @@ class Updater:
         dtpath = os.path.join(self.dotpath, dotfile.src)
         dtpath = os.path.expanduser(dtpath)
 
-        if self._ignore([path, dtpath]):
+        if self._ignore([path, dtpath], dotfile):
             self.log.sub('\"{}\" ignored'.format(dotfile.key))
             return True
         # apply write transformation if any
@@ -111,9 +111,9 @@ class Updater:
 
         # handle the pointed file
         if os.path.isdir(new_path):
-            ret = self._handle_dir(new_path, dtpath)
+            ret = self._handle_dir(new_path, dtpath, dotfile)
         else:
-            ret = self._handle_file(new_path, dtpath)
+            ret = self._handle_file(new_path, dtpath, dotfile)
 
         if fsmode != dfmode:
             # mirror rights
@@ -194,9 +194,9 @@ class Updater:
         except OSError as e:
             self.log.err(e)
 
-    def _handle_file(self, path, dtpath, compare=True):
+    def _handle_file(self, path, dtpath, dotfile, compare=True):
         """sync path (deployed file) and dtpath (dotdrop dotfile path)"""
-        if self._ignore([path, dtpath]):
+        if self._ignore([path, dtpath], dotfile):
             self.log.sub('\"{}\" ignored'.format(dtpath))
             return True
         if self.debug:
@@ -234,29 +234,29 @@ class Updater:
             return False
         return True
 
-    def _handle_dir(self, path, dtpath):
+    def _handle_dir(self, path, dtpath, dotfile):
         """sync path (deployed dir) and dtpath (dotdrop dir path)"""
         if self.debug:
             self.log.dbg('handle update for dir {} to {}'.format(path, dtpath))
         # paths must be absolute (no tildes)
         path = os.path.expanduser(path)
         dtpath = os.path.expanduser(dtpath)
-        if self._ignore([path, dtpath]):
+        if self._ignore([path, dtpath], dotfile):
             self.log.sub('\"{}\" ignored'.format(dtpath))
             return True
         # find the differences
         diff = filecmp.dircmp(path, dtpath, ignore=None)
         # handle directories diff
-        ret = self._merge_dirs(diff)
+        ret = self._merge_dirs(diff, dotfile)
         self._mirror_rights(path, dtpath)
         return ret
 
-    def _merge_dirs(self, diff):
+    def _merge_dirs(self, diff, dotfile):
         """Synchronize directories recursively."""
         left, right = diff.left, diff.right
         if self.debug:
             self.log.dbg('sync dir {} to {}'.format(left, right))
-        if self._ignore([left, right]):
+        if self._ignore([left, right], dotfile):
             return True
 
         # create dirs that don't exist in dotdrop
@@ -267,7 +267,7 @@ class Updater:
                 continue
             # match to dotdrop dotpath
             new = os.path.join(right, toadd)
-            if self._ignore([exist, new]):
+            if self._ignore([exist, new], dotfile):
                 self.log.sub('\"{}\" ignored'.format(exist))
                 continue
             if self.dry:
@@ -285,7 +285,7 @@ class Updater:
             if not os.path.isdir(old):
                 # ignore files for now
                 continue
-            if self._ignore([old]):
+            if self._ignore([old], dotfile):
                 continue
             if self.dry:
                 self.log.dry('would rm -r {}'.format(old))
@@ -305,14 +305,14 @@ class Updater:
         for f in fdiff:
             fleft = os.path.join(left, f)
             fright = os.path.join(right, f)
-            if self._ignore([fleft, fright]):
+            if self._ignore([fleft, fright], dotfile):
                 continue
             if self.dry:
                 self.log.dry('would cp {} {}'.format(fleft, fright))
                 continue
             if self.debug:
                 self.log.dbg('cp {} {}'.format(fleft, fright))
-            self._handle_file(fleft, fright, compare=False)
+            self._handle_file(fleft, fright, dotfile, compare=False)
 
         # copy files that don't exist in dotdrop
         for toadd in diff.left_only:
@@ -321,7 +321,7 @@ class Updater:
                 # ignore dirs, done above
                 continue
             new = os.path.join(right, toadd)
-            if self._ignore([exist, new]):
+            if self._ignore([exist, new], dotfile):
                 continue
             if self.dry:
                 self.log.dry('would cp {} {}'.format(exist, new))
@@ -340,7 +340,7 @@ class Updater:
             if os.path.isdir(new):
                 # ignore dirs, done above
                 continue
-            if self._ignore([new]):
+            if self._ignore([new], dotfile):
                 continue
             if self.dry:
                 self.log.dry('would rm {}'.format(new))
@@ -359,7 +359,7 @@ class Updater:
 
         # Recursively decent into common subdirectories.
         for subdir in diff.subdirs.values():
-            self._merge_dirs(subdir)
+            self._merge_dirs(subdir, dotfile)
 
         # Nothing more to do here.
         return True
@@ -378,10 +378,12 @@ class Updater:
             return False
         return True
 
-    def _ignore(self, paths):
+    def _ignore(self, paths, dotfile):
+        ignore_missing_in_dotdrop = self.ignore_missing_in_dotdrop or \
+            dotfile.ignore_missing_in_dotdrop
         if must_ignore(
             paths, self.ignores, debug=self.debug,
-            ignore_missing_in_dotdrop=self.ignore_missing_in_dotdrop,
+            ignore_missing_in_dotdrop=ignore_missing_in_dotdrop,
         ):
             if self.debug:
                 self.log.dbg('ignoring update for {}'.format(paths))
